@@ -35,7 +35,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define SECRET_CODE_LENGTH 4
+#define SECRET_CODE_LENGTH 3
 #define INPUT_TIMEOUT 5000  // 5 seconds in milliseconds
 
 /* USER CODE END PD */
@@ -64,7 +64,7 @@ uint8_t TOUT = 0, CheckSum, i;
 uint8_t T_Byte1, T_Byte2, RH_Byte1, RH_Byte2;
 
 // Security system variables
-const uint8_t SECRET_CODE[SECRET_CODE_LENGTH] = {0, 1, 2, 3};  // Red=0, Green=1, Blue=2, Yellow=3
+const uint8_t SECRET_CODE[SECRET_CODE_LENGTH] = {0, 1, 2};  // Red=0, Green=1, Blue=2, Yellow=3
 uint8_t button_history[SECRET_CODE_LENGTH] = {0};
 uint8_t input_index = 0;
 uint32_t last_press_time = 0;
@@ -90,8 +90,9 @@ static void MX_TIM1_Init(void);
 #define BUTTON_RED_PIN GPIO_PIN_1
 #define BUTTON_GREEN_PIN GPIO_PIN_2
 #define BUTTON_BLUE_PIN GPIO_PIN_13
-#define BUTTON_YELLOW_PIN GPIO_PIN_14
+#define LED_PIN GPIO_PIN_5
 #define BUTTON_PORT GPIOB
+#define LED_PORT GPIOA
 uint8_t RHI, RHD, TCI, TCD, SUM;
 uint32_t pMillis, cMillis;
 float tCelsius = 0;
@@ -165,57 +166,135 @@ uint8_t DHT11_Read (void)
 
 void Security_System_Handler(void) {
     // Lire l'état des boutons (actif bas)
-    uint8_t rouge = HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_RED_PIN);
-    uint8_t vert = HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_GREEN_PIN);
-    uint8_t bleu = HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_BLUE_PIN);
-    uint8_t jaune =HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_YELLOW_PIN);
+    uint8_t rouge = !HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_RED_PIN);
+    uint8_t vert = !HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_GREEN_PIN);
+    uint8_t bleu = !HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_BLUE_PIN);
+
 
     // Détection séquentielle
-    if(input_index < SECRET_CODE_LENGTH) {
-        if(rouge && (input_index == 0)) {
-            button_history[input_index++] = 0;
+    if (input_index < SECRET_CODE_LENGTH) {
+        if (rouge) {
+            button_history[input_index++] = 0; // Enregistre l'appui sur le bouton rouge
             last_press_time = HAL_GetTick();
             lcd_clear();
-            lcd_send_string("Code: R");
+            lcd_init();
+            lcd_send_string("R");
+            HAL_Delay(1000); // Délai pour éviter les appuis multiples
         }
-        else if(vert && (input_index == 1)) {
-            button_history[input_index++] = 1;
+        else if (vert) {
+            button_history[input_index++] = 1; // Enregistre l'appui sur le bouton vert
             last_press_time = HAL_GetTick();
-            lcd_send_string("V");
+            lcd_clear();
+            lcd_init();
+            lcd_send_string("G");
+            HAL_Delay(1000);
         }
-        else if(bleu && (input_index == 2)) {
-            button_history[input_index++] = 2;
+        else if (bleu) {
+            button_history[input_index++] = 2; // Enregistre l'appui sur le bouton bleu
             last_press_time = HAL_GetTick();
+            lcd_clear();
+            lcd_init();
             lcd_send_string("B");
+            HAL_Delay(1000);
         }
-        else if(jaune && (input_index == 3)) {
-            button_history[input_index++] = 3;
-            last_press_time = HAL_GetTick();
-            lcd_send_string("J");
-        }
+
+
     }
 
-    // Vérifier le code après 5 secondes
-    if((HAL_GetTick() - last_press_time > 5000) && (input_index > 0)) {
+    // Vérifier le code après 2 secondes
+    if((HAL_GetTick() - last_press_time > 6000) && (input_index > 0)) {
         if(memcmp(button_history, SECRET_CODE, SECRET_CODE_LENGTH) == 0) {
             door_open = 1;
-            lcd_clear();
 
-            HAL_Delay(1000);
+            lcd_clear();
+            lcd_init();
+            lcd_send_string("OPEN");
+            HAL_Delay(2000);
             HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET); // Buzzer court
             HAL_Delay(500);
             HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
-            lcd_send_string("OPEN");
+
         } else {
-            lcd_clear();
+        	 char buff[64];
+        	 sprintf(buff,"Warniiiing !! Access to your house !");
+        	 HAL_UART_Transmit(&huart2, (uint8_t *)buff, strlen(buff), HAL_MAX_DELAY);
+
+        	lcd_clear();
+        	lcd_init();
             lcd_send_string("ERROR!");
+
+            HAL_Delay(2000);
+            HAL_GPIO_WritePin(LED_PIN, LED_PORT, GPIO_PIN_SET);
             HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET); // Buzzer long
             HAL_Delay(2000);
             HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(LED_PIN, LED_PORT, GPIO_PIN_RESET);
         }
         input_index = 0;
         memset(button_history, 0, sizeof(button_history));
     }
+}
+void display_values(){
+
+
+	if (DHT11_Start())
+		      {
+		          RHI = DHT11_Read(); // Relative humidity integral
+		          RHD = DHT11_Read(); // Relative humidity decimal
+		          TCI = DHT11_Read(); // Celsius integral
+		          TCD = DHT11_Read(); // Celsius decimal
+		          SUM = DHT11_Read(); // Check sum
+
+
+
+		          if (RHI + RHD + TCI + TCD == SUM)
+		          {
+		              // Calculate temperature and humidity
+		              tCelsius = (float)TCI + (float)(TCD / 10.0);
+		              RH = (float)RHI + (float)(RHD / 10.0);
+		              lcd_clear();
+		              lcd_put_cur(0, 0);
+		              lcd_send_string("DATA STOCKED");
+
+
+		          	  }
+		          else
+		          {
+		              lcd_clear();
+		              lcd_put_cur(0, 0);
+		              lcd_send_string("Checksum Err!");
+		          }
+
+
+		          	              // Display temperature on line 1
+		          	              lcd_clear();
+		          	              lcd_put_cur(0, 0); // Line 1, Column 0
+		          	              lcd_send_string("Temp: ");
+
+		          	              int temp_int_part = (int)tCelsius; // Integer part of temperature
+		          	              int temp_frac_part = (int)((tCelsius - temp_int_part) * 10); // Fractional part of temperature
+
+		          	              lcd_send_char(temp_int_part / 10 + '0'); // Tens place
+		          	              lcd_send_char(temp_int_part % 10 + '0'); // Units place
+		          	              lcd_send_char('.');
+		          	              lcd_send_char(temp_frac_part + '0'); // Fractional part
+		          	              lcd_send_char(223);
+		          	              lcd_send_string("C");
+
+
+		          	              // Display humidity on line 2
+		          	              lcd_put_cur(1, 0); // Line 2, Column 0
+		          	              lcd_send_string("RH: ");
+
+		          	              int rh_int_part = (int)RH; // Integer part of humidity
+		          	              int rh_frac_part = (int)((RH - rh_int_part) * 10); // Fractional part of humidity
+
+		          	              lcd_send_char(rh_int_part / 10 + '0'); // Tens place
+		          	              lcd_send_char(rh_int_part % 10 + '0'); // Units place
+		          	              lcd_send_char('.');
+		          	              lcd_send_char(rh_frac_part + '0'); // Fractional part
+		          	              lcd_send_string(" %");
+		          	          }
 }
 /* USER CODE END 0 */
 
@@ -265,68 +344,17 @@ int main(void)
   while (1)
   {
 
-	  if(!door_open) {
+	  if(door_open) {
+		  display_values();
 
-		  if (DHT11_Start())
-	      {
-	          RHI = DHT11_Read(); // Relative humidity integral
-	          RHD = DHT11_Read(); // Relative humidity decimal
-	          TCI = DHT11_Read(); // Celsius integral
-	          TCD = DHT11_Read(); // Celsius decimal
-	          SUM = DHT11_Read(); // Check sum
-
-
-
-	          if (RHI + RHD + TCI + TCD == SUM)
-	          {
-	              // Calculate temperature and humidity
-	              tCelsius = (float)TCI + (float)(TCD / 10.0);
-	              RH = (float)RHI + (float)(RHD / 10.0);
-	              lcd_clear();
-	              lcd_put_cur(0, 0);
-	              lcd_send_string("DATA STOCKED");
-
-
-	          	  }
-	          else
-	          {
-	              lcd_clear();
-	              lcd_put_cur(0, 0);
-	              lcd_send_string("Checksum Err!");
-	          }
-
-
-	          	              // Display temperature on line 1
-	          	              lcd_clear();
-	          	              lcd_put_cur(0, 0); // Line 1, Column 0
-	          	              lcd_send_string("Temp: ");
-
-	          	              int temp_int_part = (int)tCelsius; // Integer part of temperature
-	          	              int temp_frac_part = (int)((tCelsius - temp_int_part) * 10); // Fractional part of temperature
-
-	          	              lcd_send_char(temp_int_part / 10 + '0'); // Tens place
-	          	              lcd_send_char(temp_int_part % 10 + '0'); // Units place
-	          	              lcd_send_char('.');
-	          	              lcd_send_char(temp_frac_part + '0'); // Fractional part
-	          	              lcd_send_char(223);
-	          	              lcd_send_string("C");
-
-
-	          	              // Display humidity on line 2
-	          	              lcd_put_cur(1, 0); // Line 2, Column 0
-	          	              lcd_send_string("RH: ");
-
-	          	              int rh_int_part = (int)RH; // Integer part of humidity
-	          	              int rh_frac_part = (int)((RH - rh_int_part) * 10); // Fractional part of humidity
-
-	          	              lcd_send_char(rh_int_part / 10 + '0'); // Tens place
-	          	              lcd_send_char(rh_int_part % 10 + '0'); // Units place
-	          	              lcd_send_char('.');
-	          	              lcd_send_char(rh_frac_part + '0'); // Fractional part
-	          	              lcd_send_string(" %");
-	          	          }
 	      }
-	  Security_System_Handler();
+	  else{
+
+		  Security_System_Handler();
+		  display_values();
+	  }
+
+
 	  HAL_Delay(400);
     /* USER CODE END WHILE */
 
@@ -525,11 +553,15 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
 
-      GPIO_InitStruct.Pin = BUTTON_RED_PIN | BUTTON_GREEN_PIN | BUTTON_BLUE_PIN | BUTTON_YELLOW_PIN;
+      GPIO_InitStruct.Pin = BUTTON_RED_PIN | BUTTON_GREEN_PIN | BUTTON_BLUE_PIN;
       GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
       GPIO_InitStruct.Pull = GPIO_PULLUP; // Boutons connectés à GND
       HAL_GPIO_Init(BUTTON_PORT, &GPIO_InitStruct);
 
+      GPIO_InitStruct.Pin = LED_PIN;
+      GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+      GPIO_InitStruct.Pull = GPIO_NOPULL;
+      HAL_GPIO_Init(LED_PORT, &GPIO_InitStruct);
       // Configuration buzzer
       GPIO_InitStruct.Pin = BUZZER_PIN;
       GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
