@@ -64,7 +64,7 @@ uint8_t TOUT = 0, CheckSum, i;
 uint8_t T_Byte1, T_Byte2, RH_Byte1, RH_Byte2;
 
 // Security system variables
-const uint8_t SECRET_CODE[SECRET_CODE_LENGTH] = {0, 1, 2};  // Red=0, Green=1, Blue=2, Yellow=3
+const uint8_t SECRET_CODE[SECRET_CODE_LENGTH] = {0, 1, 2};  // Red=0, Green=1, White=2, Yellow=3
 uint8_t button_history[SECRET_CODE_LENGTH] = {0};
 uint8_t input_index = 0;
 uint32_t last_press_time = 0;
@@ -90,9 +90,9 @@ static void MX_TIM1_Init(void);
 #define BUTTON_RED_PIN GPIO_PIN_1
 #define BUTTON_GREEN_PIN GPIO_PIN_2
 #define BUTTON_BLUE_PIN GPIO_PIN_13
-#define LED_PIN GPIO_PIN_5
+
+#define LED_PIN2 GPIO_PIN_7
 #define BUTTON_PORT GPIOB
-#define LED_PORT GPIOA
 uint8_t RHI, RHD, TCI, TCD, SUM;
 uint32_t pMillis, cMillis;
 float tCelsius = 0;
@@ -171,7 +171,7 @@ void Security_System_Handler(void) {
     uint8_t bleu = !HAL_GPIO_ReadPin(BUTTON_PORT, BUTTON_BLUE_PIN);
 
 
-    // Détection séquentielle
+
     if (input_index < SECRET_CODE_LENGTH) {
         if (rouge) {
             button_history[input_index++] = 0; // Enregistre l'appui sur le bouton rouge
@@ -201,21 +201,32 @@ void Security_System_Handler(void) {
 
     }
 
-    // Vérifier le code après 2 secondes
+    // Vérifier le code après 6 secondes
     if((HAL_GetTick() - last_press_time > 6000) && (input_index > 0)) {
         if(memcmp(button_history, SECRET_CODE, SECRET_CODE_LENGTH) == 0) {
             door_open = 1;
+            char buff[64];
+            sprintf(buff, "\033[2J\033[H"); // ANSI escape codes to clear screen and move cursor
+            HAL_UART_Transmit(&huart2, (uint8_t *)buff, strlen(buff), HAL_MAX_DELAY);
+
+            sprintf(buff,"Correct! Welcome to your house");
+            HAL_UART_Transmit(&huart2, (uint8_t *)buff, strlen(buff), HAL_MAX_DELAY);
 
             lcd_clear();
             lcd_init();
             lcd_send_string("OPEN");
+
             HAL_Delay(2000);
-            HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET); // Buzzer court
+            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+            HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
             HAL_Delay(500);
             HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
 
         } else {
         	 char buff[64];
+        	 sprintf(buff, "\033[2J\033[H"); // ANSI escape codes to clear screen and move cursor
+        	 HAL_UART_Transmit(&huart2, (uint8_t *)buff, strlen(buff), HAL_MAX_DELAY);
+
         	 sprintf(buff,"Warniiiing !! Access to your house !");
         	 HAL_UART_Transmit(&huart2, (uint8_t *)buff, strlen(buff), HAL_MAX_DELAY);
 
@@ -224,77 +235,124 @@ void Security_System_Handler(void) {
             lcd_send_string("ERROR!");
 
             HAL_Delay(2000);
-            HAL_GPIO_WritePin(LED_PIN, LED_PORT, GPIO_PIN_SET);
-            HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET); // Buzzer long
+
+            HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
             HAL_Delay(2000);
             HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
-            HAL_GPIO_WritePin(LED_PIN, LED_PORT, GPIO_PIN_RESET);
+
         }
         input_index = 0;
         memset(button_history, 0, sizeof(button_history));
     }
 }
-void display_values(){
+void display_values() {
+    if (DHT11_Start()) {
+        RHI = DHT11_Read(); // Relative humidity integral
+        RHD = DHT11_Read(); // Relative humidity decimal
+        TCI = DHT11_Read(); // Celsius integral
+        TCD = DHT11_Read(); // Celsius decimal
+        SUM = DHT11_Read(); // Check sum
+
+        if (RHI + RHD + TCI + TCD == SUM) {
+
+            tCelsius = (float)TCI + (float)(TCD / 10.0);
+            RH = (float)RHI + (float)(RHD / 10.0);
+
+            lcd_clear();
 
 
-	if (DHT11_Start())
-		      {
-		          RHI = DHT11_Read(); // Relative humidity integral
-		          RHD = DHT11_Read(); // Relative humidity decimal
-		          TCI = DHT11_Read(); // Celsius integral
-		          TCD = DHT11_Read(); // Celsius decimal
-		          SUM = DHT11_Read(); // Check sum
+            lcd_put_cur(0, 0);
+            lcd_send_string("Temp: ");
+
+            int temp_int_part = (int)tCelsius; // Integer part of temperature
+            int temp_frac_part = (int)((tCelsius - temp_int_part) * 10); // Fractional part of temperature
+
+            lcd_send_char(temp_int_part / 10 + '0'); // Tens place
+            lcd_send_char(temp_int_part % 10 + '0'); // Units place
+            lcd_send_char('.');
+            lcd_send_char(temp_frac_part + '0');
+            lcd_send_char(223);
+            lcd_send_string("C");
 
 
+            static uint8_t previous_state = 0;
 
-		          if (RHI + RHD + TCI + TCD == SUM)
-		          {
-		              // Calculate temperature and humidity
-		              tCelsius = (float)TCI + (float)(TCD / 10.0);
-		              RH = (float)RHI + (float)(RHD / 10.0);
-		              lcd_clear();
-		              lcd_put_cur(0, 0);
-		              lcd_send_string("DATA STOCKED");
+            if (tCelsius > 25) {
+                lcd_put_cur(1, 0);
+                lcd_send_string("HIGH temp");
 
+                if (previous_state != 1) {
+                    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
+                    char buff[64];
+                                sprintf(buff, "\033[2J\033[H"); // ANSI escape codes to clear screen and move cursor
+                                HAL_UART_Transmit(&huart2, (uint8_t *)buff, strlen(buff), HAL_MAX_DELAY);
 
-		          	  }
-		          else
-		          {
-		              lcd_clear();
-		              lcd_put_cur(0, 0);
-		              lcd_send_string("Checksum Err!");
-		          }
+                                sprintf(buff,"OPEN THE WINDOOOW QUICKLY");
+                                HAL_UART_Transmit(&huart2, (uint8_t *)buff, strlen(buff), HAL_MAX_DELAY);
+                    HAL_Delay(1000); // Buzzer court
 
+                    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
+                    previous_state = 1;
+                }
+            } else if (tCelsius < 15) {
+                lcd_put_cur(1, 0);
+                lcd_send_string("LOW temp");
 
-		          	              // Display temperature on line 1
-		          	              lcd_clear();
-		          	              lcd_put_cur(0, 0); // Line 1, Column 0
-		          	              lcd_send_string("Temp: ");
-
-		          	              int temp_int_part = (int)tCelsius; // Integer part of temperature
-		          	              int temp_frac_part = (int)((tCelsius - temp_int_part) * 10); // Fractional part of temperature
-
-		          	              lcd_send_char(temp_int_part / 10 + '0'); // Tens place
-		          	              lcd_send_char(temp_int_part % 10 + '0'); // Units place
-		          	              lcd_send_char('.');
-		          	              lcd_send_char(temp_frac_part + '0'); // Fractional part
-		          	              lcd_send_char(223);
-		          	              lcd_send_string("C");
+                if (previous_state != 2) {
+                    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
+                    HAL_Delay(1000); // Buzzer court
+                    HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
+                    previous_state = 2;
+                }
+            }
 
 
-		          	              // Display humidity on line 2
-		          	              lcd_put_cur(1, 0); // Line 2, Column 0
-		          	              lcd_send_string("RH: ");
+            lcd_put_cur(1, 0);
+            lcd_send_string("RH: ");
 
-		          	              int rh_int_part = (int)RH; // Integer part of humidity
-		          	              int rh_frac_part = (int)((RH - rh_int_part) * 10); // Fractional part of humidity
+            int rh_int_part = (int)RH;
+            int rh_frac_part = (int)((RH - rh_int_part) * 10);
 
-		          	              lcd_send_char(rh_int_part / 10 + '0'); // Tens place
-		          	              lcd_send_char(rh_int_part % 10 + '0'); // Units place
-		          	              lcd_send_char('.');
-		          	              lcd_send_char(rh_frac_part + '0'); // Fractional part
-		          	              lcd_send_string(" %");
-		          	          }
+            lcd_send_char(rh_int_part / 10 + '0');
+            lcd_send_char(rh_int_part % 10 + '0');
+            lcd_send_char('.');
+            lcd_send_char(rh_frac_part + '0');
+            lcd_send_string(" %");
+            static uint8_t previous_state2 = 0;
+            if (RH > 60) {
+                                       lcd_put_cur(0, 0);
+                                       lcd_send_string("HIGH humidity");
+
+                                       if (previous_state2 != 1) {
+                                    	   char buff[64];
+                                           HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
+                                           sprintf(buff, "\033[2J\033[H"); // ANSI escape codes to clear screen and move cursor
+                                            HAL_UART_Transmit(&huart2, (uint8_t *)buff, strlen(buff), HAL_MAX_DELAY);
+
+                                            sprintf(buff,"Activer l'aspirateur !!! ");
+                                            HAL_UART_Transmit(&huart2, (uint8_t *)buff, strlen(buff), HAL_MAX_DELAY);
+                                           HAL_Delay(2000);
+                                           HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
+                                           previous_state2 = 1;
+                                       }
+                                   } else if (RH < 20) {
+                                       lcd_put_cur(0, 0);
+                                       lcd_send_string("LOW humidity");
+
+                                       if (previous_state2 != 2) {
+                                           HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_SET);
+                                           HAL_Delay(1000);
+                                           HAL_GPIO_WritePin(BUZZER_PORT, BUZZER_PIN, GPIO_PIN_RESET);
+                                           previous_state2 = 2;
+                                       }
+                                   }
+        } else {
+            // En cas d'erreur de checksum
+            lcd_clear();
+            lcd_put_cur(0, 0);
+            lcd_send_string("Checksum Err!");
+        }
+    }
 }
 /* USER CODE END 0 */
 
@@ -331,6 +389,7 @@ int main(void)
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_Base_Start(&htim1);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
   lcd_init();
   lcd_clear();
   lcd_put_cur(0, 0);
@@ -352,8 +411,9 @@ int main(void)
 
 		  Security_System_Handler();
 		  display_values();
-	  }
 
+	  }
+	  display_values();
 
 	  HAL_Delay(400);
     /* USER CODE END WHILE */
@@ -558,10 +618,10 @@ static void MX_GPIO_Init(void)
       GPIO_InitStruct.Pull = GPIO_PULLUP; // Boutons connectés à GND
       HAL_GPIO_Init(BUTTON_PORT, &GPIO_InitStruct);
 
-      GPIO_InitStruct.Pin = LED_PIN;
-      GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+      GPIO_InitStruct.Pin = GPIO_PIN_5 | GPIO_PIN_0;
+      GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
       GPIO_InitStruct.Pull = GPIO_NOPULL;
-      HAL_GPIO_Init(LED_PORT, &GPIO_InitStruct);
+      HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
       // Configuration buzzer
       GPIO_InitStruct.Pin = BUZZER_PIN;
       GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
